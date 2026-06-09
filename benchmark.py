@@ -135,18 +135,6 @@ if NUMBA_DISPONIBLE:
         return x0
 
 if CUPY_DISPONIBLE:
-    rawkernel_mul = cp.RawKernel(r'''
-    extern "C" __global__
-    void elementwise_mul(const double* M, const double* b,
-                         double* temp, int n) {
-        int idx = blockDim.x * blockIdx.x + threadIdx.x;
-        if (idx < n * n) {
-            int j = idx % n;
-            temp[idx] = M[idx] * b[j];
-        }
-    }
-    ''', 'elementwise_mul')
-
     ewkernel_mul = cp.ElementwiseKernel(
         'float64 m, float64 b', 'float64 temp',
         'temp = m * b', 'ewkernel_mul'
@@ -317,21 +305,18 @@ if __name__ == '__main__':
         t = time.perf_counter() - start
         resultados.append(("CuPy GPU M@b", t, np.linalg.norm(x_ref.ravel() - cp.asnumpy(x8_gpu))))
 
-    # V9: CuPy RawKernel element-wise
+    # V9: CuPy ElementwiseKernel
     if CUPY_DISPONIBLE:
-        total_el = n2 * n2
-        threads = 256
-        blocks = (total_el + threads - 1) // threads
-        temp_gpu = cp.zeros(total_el)
-        rawkernel_mul((blocks,), (threads,), (M_gpu, b_gpu, temp_gpu, n2))
-        cp.cuda.Stream.null.synchronize()
+        b_exp = cp.tile(b_gpu, (n2, 1))
+        _ = ewkernel_mul(M_gpu, b_exp)
+        cp.cuda.Device().synchronize()
         start = time.perf_counter()
         for vuelta in range(VUELTAS):
-            rawkernel_mul((blocks,), (threads,), (M_gpu, b_gpu, temp_gpu, n2))
-            x9_gpu = temp_gpu.reshape(n2, n2).sum(axis=1)
-        cp.cuda.Stream.null.synchronize()
+            temp_ew = ewkernel_mul(M_gpu, b_exp)
+            x9_gpu = cp.sum(temp_ew, axis=1)
+        cp.cuda.Device().synchronize()
         t = time.perf_counter() - start
-        resultados.append(("RawKernel elem", t, np.linalg.norm(x_ref.ravel() - cp.asnumpy(x9_gpu))))
+        resultados.append(("ElementwiseKern", t, np.linalg.norm(x_ref.ravel() - cp.asnumpy(x9_gpu))))
 
     # V10: multiprocessing Pool
     num_proc = multiprocessing.cpu_count()
@@ -345,20 +330,7 @@ if __name__ == '__main__':
     t = time.perf_counter() - start
     resultados.append((f"Pool ({num_proc} proc)", t, np.linalg.norm(x_ref.ravel() - x10)))
 
-    # V11: CuPy ElementwiseKernel
-    if CUPY_DISPONIBLE:
-        b_exp = cp.tile(b_gpu, (n2, 1))
-        _ = ewkernel_mul(M_gpu, b_exp)
-        cp.cuda.Device().synchronize()
-        start = time.perf_counter()
-        for vuelta in range(VUELTAS):
-            temp_ew = ewkernel_mul(M_gpu, b_exp)
-            x11_gpu = cp.sum(temp_ew, axis=1)
-        cp.cuda.Device().synchronize()
-        t = time.perf_counter() - start
-        resultados.append(("ElementwiseKern", t, np.linalg.norm(x_ref.ravel() - cp.asnumpy(x11_gpu))))
-
-    # V12: Numba @cuda.jit
+    # V11: Numba @cuda.jit
     if NUMBA_CUDA_DISPONIBLE:
         M_flat_gpu = numba_cuda.to_device(M.ravel())
         b_nc = numba_cuda.to_device(b_1d)
@@ -370,10 +342,10 @@ if __name__ == '__main__':
         start = time.perf_counter()
         for vuelta in range(VUELTAS):
             numba_ew_kernel[bpg, tpb](M_flat_gpu, b_nc, temp_nc, n2)
-            x12 = temp_nc.copy_to_host().reshape(n2, n2).sum(axis=1)
+            x11 = temp_nc.copy_to_host().reshape(n2, n2).sum(axis=1)
         numba_cuda.synchronize()
         t = time.perf_counter() - start
-        resultados.append(("Numba @cuda.jit", t, np.linalg.norm(x_ref.ravel() - x12)))
+        resultados.append(("Numba @cuda.jit", t, np.linalg.norm(x_ref.ravel() - x11)))
 
     # =============================================
     # Tabla de resultados
