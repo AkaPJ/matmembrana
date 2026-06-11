@@ -102,17 +102,25 @@ if NUMBA_DISPONIBLE:
 
     @njit(cache=True)
     def matvec_stencil(b, N, mu):
+        """Stencil que reproduce exactamente la matriz de creasis().
+        Las condiciones se basan en dónde creasis pone los ceros en
+        vdi (índices 0, N, 2N, ...), no en los cortes físicos de la
+        rejilla."""
         n2 = N * N
         x0 = np.zeros(n2)
         for idx in range(n2):
             val = (1.0 + 4.0 * mu) * b[idx]
-            if idx % N != 0:
-                val += (-mu) * b[idx - 1]
-            if idx % N != (N - 1):
+            # Vecino derecha: M[idx, idx+1] = vdi[idx]
+            if idx + 1 < n2 and idx % N != 0:
                 val += (-mu) * b[idx + 1]
+            # Vecino izquierda: M[idx, idx-1] = vdi[idx-1]
+            if idx >= 1 and (idx - 1) % N != 0:
+                val += (-mu) * b[idx - 1]
+            # Vecino arriba (-N)
             if idx >= N:
                 val += (-mu) * b[idx - N]
-            if idx < n2 - N:
+            # Vecino abajo (+N)
+            if idx + N < n2:
                 val += (-mu) * b[idx + N]
             x0[idx] = val
         return x0
@@ -123,13 +131,13 @@ if NUMBA_DISPONIBLE:
         x0 = np.zeros(n2)
         for idx in prange(n2):
             val = (1.0 + 4.0 * mu) * b[idx]
-            if idx % N != 0:
-                val += (-mu) * b[idx - 1]
-            if idx % N != (N - 1):
+            if idx + 1 < n2 and idx % N != 0:
                 val += (-mu) * b[idx + 1]
+            if idx >= 1 and (idx - 1) % N != 0:
+                val += (-mu) * b[idx - 1]
             if idx >= N:
                 val += (-mu) * b[idx - N]
-            if idx < n2 - N:
+            if idx + N < n2:
                 val += (-mu) * b[idx + N]
             x0[idx] = val
         return x0
